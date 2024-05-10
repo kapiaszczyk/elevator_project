@@ -49,10 +49,6 @@ class Dispatcher:
         worker = self.workers[self.last_worker]
         worker.add_job(job)
 
-    def stop(self):
-        self.is_active = False
-        self.worker_thread.join()
-
     def get_worker_by_id(self, id):
         for worker in self.workers:
             if worker.get_id() == id:
