@@ -25,12 +25,12 @@ class EventExecutor:
 executor = EventExecutor()
 
 class ID_Generator:
-    
+
     def __init__(self):
         self.id = 0
 
     def get_next_id(self):
-        self.id = self.id + 1 
+        self.id = self.id + 1
         return self.id
 
 generator = ID_Generator()
@@ -48,22 +48,22 @@ class Event:
 
     def get_destination(self):
         return self.destination
-    
+
     def get_direction(self):
         return self.direction
-    
+
     def get_origin(self):
         return self.origin
 
 class EventBus:
     def __init__(self):
         self.subscribers = {}
-    
+
     def subscribe(self, event_type, subscriber):
         if event_type not in self.subscribers:
             self.subscribers[event_type] = []
         self.subscribers[event_type].append(subscriber)
-    
+
     def publish(self, obj: Event):
         event_type = obj.get_event_type()
         if event_type in self.subscribers:
@@ -138,7 +138,7 @@ class Elevator:
         self.id = generator.get_next_id()
         self.state = State(self.id, 0, 0)
         self.floor_queue = Queue()
-        self.is_active = True
+        self.is_active = True        
         self.elevator_thread = threading.Thread(target=self.process_jobs)
         self.elevator_thread.start()
 
@@ -164,12 +164,16 @@ class Elevator:
 
     def get_queue(self):
         return self.floor_queue
-    
+
     def get_state(self) -> State:
         return self.state
-    
+
     def set_state(self, state: State):
         self.state = state
+
+    def update_state(self, current_floor, destination_floor):
+        self.state.set_current_floor(current_floor)
+        self.state.set_destination_floor(destination_floor)
 
 class InternalDispatcher:
     """Represents dispatching requests within the elevator."""
@@ -229,8 +233,7 @@ class ExternalDispatcher:
                 print(f"ExternalDispatcher: Dispatcher with ID {target_dispatcher_id} not found")
 
     def get_dispatcher_by_id(self, id):
-        return self.internal_dispatchers[id]
-
+        return self.internal_dispatchers[id - 1]
 
 class ElevatorContext:
     """Holds all elevator context."""
@@ -272,14 +275,16 @@ class ElevatorContext:
 
     def get_elevators(self):
         return self.elevators
-    
+
     def update_elevator_status(self, elevator_id, current_floor, destination_floor):
-        for elevator in self.elevators:
-            if elevator.get_id() == elevator_id:
-                elevator.set_state(State(elevator_id, current_floor, destination_floor))
+
+        print(f"Updating elevator {elevator_id} to floor {current_floor} with destination {destination_floor}")
+
+        elevator = self.elevators[elevator_id - 1]
+        elevator.update_state(current_floor, destination_floor)
 
     def publish_event(self, request_floor_origin, direction):
-        event = Event(ELEVATOR_EVENT, request_floor_origin, None, direction)
+        event = Event(FLOOR_EVENT, request_floor_origin, None, direction)
         self.event_bus.publish(event)
 
     def stop_all(self):
@@ -328,6 +333,12 @@ class ElevatorSystem:
 
     def pickup(self, request_floor_origin, direction):
         """Represents a call for an elevator from a floor."""
+
+        if direction == 1:
+            direction == "UP"
+        else:
+            direction == "DOWN"
+
         self.context.publish_event(request_floor_origin, direction)
 
     def update(self, elevator_id, current_floor, destination_floor):
@@ -343,14 +354,35 @@ class ElevatorSystem:
             states.append(elevator.get_state())
             state = elevator.get_state()
             id, curr, tar = state.to_string()
-            print(f"Elevator {id}, current {curr}, target {tar}")
         return states
-    
+
     def step():
         """Performs a step of the simulation"""
-    
+
     def stop_all(self):
         self.context.stop_all()
+
+class SystemHelper:
+
+    @staticmethod
+    def decode_update(values):
+        """Gets three coma separated values"""
+
+        elevator_id = int(values[0])
+        current_floor = int(values[1])
+        target_floor = int(values[2])
+
+        return elevator_id, current_floor, target_floor
+
+    @staticmethod
+    def decode_pickup(values):
+        """Gets two coma separated values"""
+
+        floor_origin = int(values[0])
+        direction = int(values[1])
+
+        return floor_origin, direction
+
 
 if __name__ == "__main__":
     """Runs the program."""
@@ -362,13 +394,41 @@ if __name__ == "__main__":
     try:
         while True:
             context.generate_random_events()
-            while input() == "f":
+
+            user_input = input()  # Change the variable name from 'input' to 'user_input'
+
+            # Forward the simulation
+            if user_input == "f":
+                print("Forwarding...")
                 executor.run_next_event()
-                context.generate_random_events()
-                if input() == "s":
-                    system.status()
+            # See the status of the elevators
+            elif user_input == "s":
+                print("Getting statuses...")
+                system.status()
+            # Update a status of an elevator
+            elif user_input == "u":
+                print("Manually updating elevator's state...")
+                print("Pass elevator_id,current_floor,target_floor")
+
+                arguments = input()
+
+                elevator_id, current_floor, destination_floor = SystemHelper.decode_update(arguments.split(","))
+
+                system.update(elevator_id, current_floor, destination_floor)
+            # Create event
+            elif user_input == "e":
+                print("Manually creating an event...")
+                print("Pass floor_origin,direction")
+
+                arguments = input()
+
+                floor_origin, direction = SystemHelper.decode_pickup(arguments.split(","))
+
+                system.pickup(floor_origin, direction)
+            else:
+                pass
     except KeyboardInterrupt:
         system.stop_all()
     except Exception as e:
-        print(f"Exception caught: {e.with_traceback()}")
+        print(f"Exception caught: {e}")
         system.stop_all()
