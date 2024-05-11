@@ -1,26 +1,31 @@
 import random
 import time
 import threading
+import logging
 
 from queue import Queue, Empty
 
 ELEVATOR_EVENT = 'elevator_button_press'
 FLOOR_EVENT = 'floor_button_press'
-FLOORS = 10
+FLOORS = 80
 ELEVEATORS_AMOUNT = 16
-ELEVATOR_SPEED = 16
+ELEVATOR_SPEED = 10
+
+logger = logging.getLogger("")
 
 class EventExecutor:
     def __init__(self):
-        self.event_queue = Queue()  # Event queue
+        self.event_queue = Queue()
 
     def schedule_event(self, event):
-        self.event_queue.put(event)  # Enqueue event
+        logger.debug(f"Scheduling event {event.get_event_type()}")
+        self.event_queue.put(event)
 
     def run_next_event(self):
         if not self.event_queue.empty():
-            next_event = self.event_queue.get()  # Dequeue event
-            next_event.execute()  # Execute the event
+            logger.debug("Running next event")
+            next_event = self.event_queue.get()
+            next_event.execute()
 
 executor = EventExecutor()
 
@@ -66,11 +71,67 @@ class EventBus:
 
     def publish(self, obj: Event):
         event_type = obj.get_event_type()
+        logger.debug(f"Publishing event of type {event_type}")
+
         if event_type in self.subscribers:
             for subscriber in self.subscribers[event_type]:
                 subscriber.handle_event(obj)
 
 event_bus = EventBus()
+
+class RandomEventEmitter:
+    def __init__(self):
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._emit_random_events)
+        self._paused = False
+
+    def start(self):
+        # Check if the thread is already started
+        if self._thread.is_alive():
+            logger.info("Random event emitter is already running.")
+            return
+        self._thread.start()
+        logger.info("Random event emitter started.")
+
+    def stop(self):
+        # Check if the thread is started
+        if not self._thread.is_alive():
+            logger.info("Random event emitter is not running.")
+            return
+        self._stop_event.set()
+        self._thread.join()
+        logger.info("Random event emitter stopped.")
+
+    def pause(self):
+        self._paused = True
+        logger.info("Random event emitter paused.")
+
+    def resume(self):
+        self._paused = False
+        logger.info("Random event emitter resumed.")
+
+    def _emit_random_events(self):
+        while not self._stop_event.is_set():
+            if self._paused:
+                time.sleep(1)
+                continue
+            time.sleep(random.randint(1, 5))
+            self.generate_random_event()
+
+    def generate_random_event(self):
+        elevator_event = random.choice([True, False])
+        random_floor = random.randint(0, FLOORS)
+
+        if elevator_event:
+            random_elevator = random.randint(1, ELEVEATORS_AMOUNT - 1)
+            event = Event(ELEVATOR_EVENT, random_elevator, random_floor, None)
+            logger.info(f"Random event: Request from elevator {random_elevator} to go to floor {random_floor}")
+            event_bus.publish(event)
+        else:
+            random_direction = random.choice(["UP", "DOWN"])
+            event = Event(FLOOR_EVENT, random_floor, None, random_direction)
+            logger.info(f"Random event: Request from floor {random_floor} to go {random_direction}")
+            event_bus.publish(event)
 
 class State:
         """Represents a state of the elevator"""
@@ -101,6 +162,7 @@ class ElevatorMoveEvent:
     def __init__(self, elevator, target_floor):
         self.elevator = elevator
         self.target_floor = target_floor
+        self.event_type = "ElevatorMoveEvent"
 
     def execute(self):
             elevator = self.elevator
@@ -112,24 +174,23 @@ class ElevatorMoveEvent:
             distance = abs(current_floor - target_floor)
             needed_time = (distance / ELEVATOR_SPEED)
 
-            print(f"[Elevator {elevator.get_id()}]: {current_floor} -> {target_floor}")
+            logger.info(f"[Elevator {elevator.get_id()}]: {current_floor} -> {target_floor}")
 
             if target_floor != current_floor:
 
-                # Set new destination floor
                 elevator.set_state(State(elevator.get_id(), current_floor, target_floor))
 
-                # Simulate needed time to move
                 time.sleep(needed_time)
 
-                # Set the arrived floor as current floor and clear destination
                 elevator.set_state(State(elevator.get_id(), target_floor, None))
 
-                print(f"[Elevator {elevator.get_id()}]: Arrived at {target_floor} ({needed_time} s)")
+                logger.info(f"[Elevator {elevator.get_id()}]: Arrived at {target_floor} ({needed_time} s)")
 
             else:
-                print(f"[Elevator {elevator.get_id()}]: Already at {target_floor}.")
+                logger.info(f"[Elevator {elevator.get_id()}]: Already at {target_floor}.")
 
+    def get_event_type(self):
+        return self.event_type
 
 class Elevator:
     """Represents an elevator."""
@@ -138,23 +199,23 @@ class Elevator:
         self.id = generator.get_next_id()
         self.state = State(self.id, 0, 0)
         self.floor_queue = Queue()
-        self.is_active = True        
+        self.is_active = True
         self.elevator_thread = threading.Thread(target=self.process_jobs)
         self.elevator_thread.start()
 
     def get_id(self):
         return self.id
-    
+
     def add_request(self, requested_floor):
         self.floor_queue.put(requested_floor)
-        print(f"Added request to floor {requested_floor} to the queue of elevator {self.id}.")
+        logger.info(f"Added request to floor {requested_floor} to the queue of elevator {self.id}.")
 
     def process_jobs(self):
         while self.is_active:
             try:
                 move_event = ElevatorMoveEvent(self, self.floor_queue.get(timeout=1))
                 executor.schedule_event(move_event)
-                # print(f"Added MoveEvent to the ExecutionQueue for elevator {self.get_id()}")
+                logger.debug(f"Added MoveEvent to the ExecutionQueue for elevator {self.get_id()}")
             except Empty:
                 continue
 
@@ -186,11 +247,11 @@ class InternalDispatcher:
         if obj.get_event_type() == ELEVATOR_EVENT:
             floor = obj.get_destination()
             elevator_id = obj.get_origin()
-            # print(f"The elevator {elevator_id} was requested to go to floor {floor} from inside.")
+            logger.info(f"InternalDispatcher: Elevator {self.elevator_id} was requested to go to floor {floor}.")
             self.elevator.add_request(floor)
         elif obj.get_event_type() == FLOOR_EVENT:
             floor = obj.get_origin()
-            # print(f"The elevator {self.elevator_id} was tasked to go to floor {floor} by ExternalDispatcher.")
+            logger.info(f"InternalDispatcher: Elevator {self.elevator_id} was requested to go to floor {floor}.")
             self.elevator.add_request(floor)
 
     def get_id(self):
@@ -210,27 +271,30 @@ class ExternalDispatcher:
         self.num_dispatchers = len(self.internal_dispatchers)
 
     def handle_event(self, obj: Event):
+
+        logger.debug(f"ExternalDispatcher: Handling event of type {obj.get_event_type()}")
+
         if obj.get_event_type() == FLOOR_EVENT:
             floor = obj.get_origin()
             direction = obj.get_direction()
-            # print(f"ExternalDispatcher: Any elevator is called to floor {floor} was called for a destination that is {direction}")
+            logger.info(f"ExternalDispatcher: Request from floor {floor} for direction {direction}.")
 
             # Round-robin the request to the next elevator
             self.last_called_dispatcher = (self.last_called_dispatcher + 1) % self.num_dispatchers
             target_dispatcher = self.internal_dispatchers[self.last_called_dispatcher]
             target_dispatcher.handle_event(obj)
 
-            # print(f"ExternalDispatcher: Request from floor {floor} passed to elevator {target_dispatcher.get_id()}")
+            logger.info(f"ExternalDispatcher: Request from floor {floor} was dispatched to elevator {target_dispatcher.get_id()}.")
 
         elif obj.get_event_type() == ELEVATOR_EVENT:
             target_dispatcher_id = obj.get_origin()
             target_dispatcher = self.get_dispatcher_by_id(target_dispatcher_id)
             destination = obj.get_destination()
             if target_dispatcher:
-                # print(f"ExternalDispatcher: Button was pressed in elevator {target_dispatcher_id} with request to floor {destination}")
+                logger.info(f"ExternalDispatcher: Request from elevator {target_dispatcher_id} to go to floor {destination}.")
                 target_dispatcher.handle_event(obj)
             else:
-                print(f"ExternalDispatcher: Dispatcher with ID {target_dispatcher_id} not found")
+                logger.error(f"ExternalDispatcher: Could not find dispatcher with id {target_dispatcher_id}.")
 
     def get_dispatcher_by_id(self, id):
         return self.internal_dispatchers[id - 1]
@@ -241,8 +305,6 @@ class ElevatorContext:
     def __init__(self):
         self.elevators = self.initalise_elevators(ELEVEATORS_AMOUNT)
         self.external_dispatcher = ExternalDispatcher()
-        self.floors = FLOORS
-        self.event_bus = EventBus()
 
         # Generate internal_dispatchers and assign them an elevator
         int_dispatchers = [InternalDispatcher(elevator.get_id(), elevator) for elevator in self.elevators]
@@ -251,12 +313,11 @@ class ElevatorContext:
         self.external_dispatcher.set_dispatchers(int_dispatchers)
 
         # Subscribe the dispatcher to the events on the bus
-        self.event_bus.subscribe(FLOOR_EVENT, self.external_dispatcher)
-        self.event_bus.subscribe(ELEVATOR_EVENT, self.external_dispatcher)
+        event_bus.subscribe(FLOOR_EVENT, self.external_dispatcher)
+        event_bus.subscribe(ELEVATOR_EVENT, self.external_dispatcher)
 
     def initalise_elevators(self, number_of_elevators):
         """Sets up the amount of elevators in the system"""
-        print("Initalising elevators...")
         return [Elevator() for _ in range(number_of_elevators)]
 
 
@@ -278,20 +339,20 @@ class ElevatorContext:
 
     def update_elevator_status(self, elevator_id, current_floor, destination_floor):
 
-        print(f"Updating elevator {elevator_id} to floor {current_floor} with destination {destination_floor}")
+        logger.info(f"Updating elevator {elevator_id} to floor {current_floor} with destination {destination_floor}")
 
         elevator = self.elevators[elevator_id - 1]
         elevator.update_state(current_floor, destination_floor)
 
     def publish_event(self, request_floor_origin, direction):
         event = Event(FLOOR_EVENT, request_floor_origin, None, direction)
-        self.event_bus.publish(event)
+        event_bus.publish(event)
 
     def stop_all(self):
-        print("Stopping elevators")
+        logger.info("Stopping all elevators")
         for elevator in self.elevators:
             elevator.stop()
-        print("All elevators stopped")
+        logger.info("All elevators stopped")
 
     def generate_random_event(self):
 
@@ -301,11 +362,11 @@ class ElevatorContext:
         if elevator_event:
             random_elevator = random.randint(1, ELEVEATORS_AMOUNT - 1)
             event = Event(ELEVATOR_EVENT, random_elevator, random_floor, None)
-            self.event_bus.publish(event)
+            event_bus.publish(event)
         else:
             random_direction = random.choice(["UP", "DOWN"])
             event = Event(FLOOR_EVENT, random_floor, None, random_direction)
-            self.event_bus.publish(event)
+            event_bus.publish(event)
 
     def generate_random_events(self):
 
@@ -318,11 +379,11 @@ class ElevatorContext:
             if elevator_event:
                 random_elevator = random.randint(1, ELEVEATORS_AMOUNT - 1)
                 event = Event(ELEVATOR_EVENT, random_elevator, random_floor, None)
-                self.event_bus.publish(event)
+                event_bus.publish(event)
             else:
                 random_direction = random.choice(["UP", "DOWN"])
                 event = Event(FLOOR_EVENT, random_floor, None, random_direction)
-                self.event_bus.publish(event)
+                event_bus.publish(event)
 
 
 class ElevatorSystem:
@@ -347,13 +408,20 @@ class ElevatorSystem:
 
     def status(self):
         """Returns collection of statuses"""
+        logger.info("Getting statuses of all elevators")
         states = []
         elevators = self.context.get_elevators()
+
+        list = []
 
         for elevator in elevators:
             states.append(elevator.get_state())
             state = elevator.get_state()
             id, curr, tar = state.to_string()
+            information = f"[Elevator {id}]: {curr} -> {tar}, "
+            list.append(information)
+
+        logger.info(list)
         return states
 
     def step():
@@ -382,53 +450,92 @@ class SystemHelper:
         direction = int(values[1])
 
         return floor_origin, direction
-
-
 if __name__ == "__main__":
     """Runs the program."""
 
     context = ElevatorContext()
-
     system = ElevatorSystem(context)
+    random_event_emitter = RandomEventEmitter()
+    logging.basicConfig(level=logging.INFO)
+
+    manual_mode = False
 
     try:
         while True:
-            context.generate_random_events()
 
-            user_input = input()  # Change the variable name from 'input' to 'user_input'
+            logger.info("Waiting for user input...")
+            user_input = input()
 
-            # Forward the simulation
-            if user_input == "f":
-                print("Forwarding...")
-                executor.run_next_event()
-            # See the status of the elevators
-            elif user_input == "s":
-                print("Getting statuses...")
-                system.status()
-            # Update a status of an elevator
-            elif user_input == "u":
-                print("Manually updating elevator's state...")
-                print("Pass elevator_id,current_floor,target_floor")
+            # Toggle between manual and automatic mode
+            if user_input == "m":
+                manual_mode = not manual_mode
+                if manual_mode:
+                    logger.info("Switched to manual mode.")
+                else:
+                    logger.info("Switched to automatic mode. Press any key to start. Press Ctrl+C to stop.")
 
-                arguments = input()
+            # Handle user inputs based on the mode
+            elif manual_mode:
+                # Manual mode actions
+                if user_input == "f":
+                    logger.info("Forwarding...")
+                    executor.run_next_event()
 
-                elevator_id, current_floor, destination_floor = SystemHelper.decode_update(arguments.split(","))
+                elif user_input == "s":
+                    logger.info("Getting statuses...")
+                    system.status()
 
-                system.update(elevator_id, current_floor, destination_floor)
-            # Create event
-            elif user_input == "e":
-                print("Manually creating an event...")
-                print("Pass floor_origin,direction")
+                elif user_input == "u":
+                    logger.info("Manually updating elevator's state...")
+                    elevator_id, current_floor, destination_floor = input("Pass elevator_id, current_floor, target_floor: ").split(",")
+                    system.update(int(elevator_id), int(current_floor), int(destination_floor))
 
-                arguments = input()
+                elif user_input == "e":
+                    logger.info("Manually requesting an elevator...")
+                    floor_origin, direction = input("Pass floor_origin, direction: ").split(",")
+                    system.pickup(int(floor_origin), direction)
 
-                floor_origin, direction = SystemHelper.decode_pickup(arguments.split(","))
+                    # Start the random event emitter
+                elif user_input == "r":
+                    logger.info("Starting random event emitter...")
+                    random_event_emitter.start()
+                # Stop the random event emitter
+                elif user_input == "x":
+                    logger.info("Stopping random event emitter...")
+                    random_event_emitter.stop()
+                # Pause the random event emitter
+                elif user_input == "p":
+                    logger.info("Pausing random event emitter...")
+                    random_event_emitter.pause()
+                # Resume the random event emitter
+                elif user_input == "c":
+                    logger.info("Resuming random event emitter...")
+                    random_event_emitter.resume()
+                elif user_input == "q":
+                    logger.info("Stopping the system...")
+                    raise KeyboardInterrupt
 
-                system.pickup(floor_origin, direction)
             else:
-                pass
+                # Automatic mode action
+                logger.info("Automatic mode started. Press Ctrl+C to stop.")
+                # Check if the random event emitter is running
+                if not random_event_emitter._thread.is_alive():
+                    logger.info("Starting random event emitter...")
+                    random_event_emitter.start()
+                # Run unless a key is pressed
+                try:
+                    while True:
+                        executor.run_next_event()
+                except KeyboardInterrupt:
+                    logger.info("Stopping the automatic mode")
+                    random_event_emitter.stop()
+                    manual_mode = True
+                    logger.info("Mode stopped.")
+
     except KeyboardInterrupt:
+        random_event_emitter.stop()
         system.stop_all()
     except Exception as e:
-        print(f"Exception caught: {e}")
+        logger.error(f"Exception caught: {e}")
+        random_event_emitter.stop()
         system.stop_all()
