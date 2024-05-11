@@ -112,18 +112,23 @@ class ElevatorMoveEvent:
             distance = abs(current_floor - target_floor)
             needed_time = (distance / ELEVATOR_SPEED)
 
-            print(f"[Elevator {elevator.get_id()}]: {current_floor} -> {target_floor} ({needed_time} s).")
+            print(f"[Elevator {elevator.get_id()}]: {current_floor} -> {target_floor}")
 
-            # Set new destination floor
-            elevator.set_state(State(elevator.get_id(), current_floor, target_floor))
+            if target_floor != current_floor:
 
-            # Simulate needed time to move
-            time.sleep(needed_time)
+                # Set new destination floor
+                elevator.set_state(State(elevator.get_id(), current_floor, target_floor))
 
-            # Set the arrived floor as current floor and clear destination
-            elevator.set_state(State(elevator.get_id(), target_floor, None))
+                # Simulate needed time to move
+                time.sleep(needed_time)
 
-            print(f"[Elevator {elevator.get_id()}]: Arrived at {target_floor}.")
+                # Set the arrived floor as current floor and clear destination
+                elevator.set_state(State(elevator.get_id(), target_floor, None))
+
+                print(f"[Elevator {elevator.get_id()}]: Arrived at {target_floor} ({needed_time} s)")
+
+            else:
+                print(f"[Elevator {elevator.get_id()}]: Already at {target_floor}.")
 
 
 class Elevator:
@@ -199,7 +204,7 @@ class ExternalDispatcher:
         for d in dispatchers:
             self.internal_dispatchers.append(d)
         self.num_dispatchers = len(self.internal_dispatchers)
-    
+
     def handle_event(self, obj: Event):
         if obj.get_event_type() == FLOOR_EVENT:
             floor = obj.get_origin()
@@ -336,6 +341,9 @@ class ElevatorSystem:
 
         for elevator in elevators:
             states.append(elevator.get_state())
+            state = elevator.get_state()
+            id, curr, tar = state.to_string()
+            print(f"Elevator {id}, current {curr}, target {tar}")
         return states
     
     def step():
@@ -354,9 +362,11 @@ if __name__ == "__main__":
     try:
         while True:
             context.generate_random_events()
-            while input() == "":
+            while input() == "f":
                 executor.run_next_event()
                 context.generate_random_events()
+                if input() == "s":
+                    system.status()
     except KeyboardInterrupt:
         system.stop_all()
     except Exception as e:
